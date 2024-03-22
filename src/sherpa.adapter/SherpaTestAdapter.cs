@@ -1,6 +1,8 @@
 ﻿using Microsoft.VisualStudio.TestPlatform.ObjectModel;
 using Microsoft.VisualStudio.TestPlatform.ObjectModel.Adapter;
 using Microsoft.VisualStudio.TestPlatform.ObjectModel.Logging;
+using Sherpa.src.sherpa.Attributes;
+using System.Reflection;
 
 namespace Sherpa.Adapter;
 
@@ -30,27 +32,56 @@ public class SherpaTestAdapter : ITestExecutor, ITestDiscoverer
             }
         }
     }
+
     private IEnumerable<TestCase> DiscoverTestsInAssembly(string assemblyPath)
     {
-        // TODO: Implement logic to discover tests in the assembly
-        var testCases = new List<TestCase>
-        {
-            CreateTestCase("TestMethod1", assemblyPath),
-            CreateTestCase("TestMethod2", assemblyPath)
-        };
+        var testCases = new List<TestCase>();
+        var assembly = Assembly.LoadFrom(assemblyPath);
+        var types = assembly.GetTypes();
 
+        foreach (var type in types)
+        {
+            var methods = type.GetMethods();
+
+            foreach (var method in methods)
+            {
+                var testAttribute = method.GetCustomAttribute<SherpaMethod>(inherit: false);
+                if (testAttribute != null)
+                {
+                    var testCase = new TestCase(method.Name, new Uri(assemblyPath), assemblyPath)
+                    {
+                        DisplayName = method.Name,
+                        CodeFilePath = method?.DeclaringType?.FullName,
+                        LineNumber = 0
+                    };
+
+                    testCases.Add(testCase);
+                }
+            }
+        }
 
         return testCases;
     }
+
     private void ExecuteTest(TestCase test, IFrameworkHandle frameworkHandle)
     {
-        // TODO: Implement logic to execute the test and report the result
-        var result = new TestResult(test)
+        var assembly = Assembly.LoadFrom(test.Source);
+        var type = assembly.GetTypes().FirstOrDefault(t => t.GetMethods().Any(m => m.Name == test.FullyQualifiedName));
+        var methodInfo = type.GetMethod(test.FullyQualifiedName);
+
+        var testInstance = Activator.CreateInstance(type);
+
+        try
         {
-            Outcome = TestOutcome.Passed
-        };
-        frameworkHandle.RecordResult(result);
+            methodInfo.Invoke(testInstance, null);
+            frameworkHandle.RecordResult(new TestResult(test) { Outcome = TestOutcome.Passed });
+        }
+        catch (Exception ex)
+        {
+            frameworkHandle.RecordResult(new TestResult(test) { Outcome = TestOutcome.Failed, ErrorMessage = ex.Message });
+        }
     }
+
     private TestCase CreateTestCase(string methodName, string assemblyPath)
     {
         var testCase = new TestCase(methodName, new Uri(assemblyPath), assemblyPath)
